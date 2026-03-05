@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "tsc && npm install --prefix mission-control && npm run build --prefix mission-control",
+    "start": "node dist/index.js & npm start --prefix mission-control"
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^7.1.0",
