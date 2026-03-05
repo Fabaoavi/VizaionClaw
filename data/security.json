@@ -1,0 +1,54 @@
+{
+  "globalAllowedCommands": [
+    "echo",
+    "date",
+    "whoami",
+    "hostname",
+    "pwd",
+    "ls",
+    "dir",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "grep",
+    "find",
+    "which",
+    "node",
+    "npm",
+    "npx",
+    "git",
+    "python",
+    "pip",
+    "curl"
+  ],
+  "globalBlockedCommands": [
+    "rm -rf /",
+    "format",
+    "del /f /s /q",
+    "mkfs",
+    "shutdown",
+    "reboot",
+    "poweroff"
+  ],
+  "globalBlockedPaths": [
+    "/etc/shadow",
+    "/etc/passwd",
+    "C:\\Windows\\System32"
+  ],
+  "globalAllowedHosts": [],
+  "userPathRules": {
+    "user_mmbf4hw4_api5": [
+      {
+        "path": "/desktop",
+        "mode": "write"
+      }
+    ],
+    "user_mmbdt5b7_5m70": [
+      {
+        "path": "C:\\Users\\fabao\\Downloads",
+        "mode": "write"
+      }
+    ]
+  }
+}

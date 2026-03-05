@@ -1,0 +1,24 @@
+﻿
+   ÔòöÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòù
+   Ôòæ        ­ƒª×  GRAVITY CLAW  ­ƒª×         Ôòæ
+   Ôòæ   Lean ÔÇó Secure ÔÇó Fully Understood  Ôòæ
+   ÔòÜÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòØ
+  
+Ô£à Config loaded
+   Model: llama-3.1-70b-versatile
+   Allowed users: 1338530081
+Ô£à Memory database ready
+Ô£à LLM providers: openrouter, groq, ollama
+Ô£à LLM ready | Model: llama-3.1-70b-versatile | Thinking: off
+Ô£à Whisper transcription ready (via Groq)
+ÔÅ¡´©Å  ElevenLabs: No ELEVENLABS_API_KEY set, TTS disabled
+ÔÅ¡´©Å  MCP: No mcp-servers.json found, skipping
+ÔÅ¡´©Å  Skills: No skills found in /skills directory
+Ô£à Scheduler ready
+
+­ƒÜÇ Gravity Claw is online!
+   Bot: @VizaionClawBot
+   Mode: long-polling (no exposed ports)
+   Features: LLM, memory, voice, tools, MCP, skills, scheduler
+   Send me a message on Telegram!
+
