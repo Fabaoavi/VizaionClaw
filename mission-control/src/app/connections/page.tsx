@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import {
     X,
     Bot,
@@ -66,7 +66,7 @@ const DEFAULT_CONNECTIONS: Connection[] = [
     { id: 'pinecone', name: 'Pinecone', icon: Database, color: '#2ECC8F', active: true, actionType: "global_only" },
 ];
 
-export default function ConnectionsPage() {
+function ConnectionsContent() {
     const searchParams = useSearchParams();
     const [connections, setConnections] = useState(DEFAULT_CONNECTIONS);
     const [loading, setLoading] = useState(true);
@@ -229,5 +229,13 @@ export default function ConnectionsPage() {
                 })}
             </div>
         </>
+    );
+}
+
+export default function ConnectionsPage() {
+    return (
+        <Suspense fallback={<div style={{ padding: 'var(--space-xl)', textAlign: 'center' }}>Loading connections...</div>}>
+            <ConnectionsContent />
+        </Suspense>
     );
 }
