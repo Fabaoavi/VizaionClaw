@@ -26,6 +26,7 @@ function getDb() {
             id TEXT PRIMARY KEY,
             project_id TEXT,
             user_id TEXT NOT NULL,
+            assignee_id TEXT,
             title TEXT NOT NULL,
             description TEXT DEFAULT '',
             priority TEXT DEFAULT 'medium',
@@ -70,8 +71,17 @@ export async function GET(req: NextRequest) {
         const status = searchParams.get("status");
         const projectId = searchParams.get("project_id");
 
-        let query = "SELECT t.*, p.name as project_name, p.color as project_color FROM tasks t LEFT JOIN projects p ON t.project_id = p.id WHERE t.user_id = ?";
-        const params: unknown[] = [user.id];
+        let query = `
+            SELECT t.*, p.name as project_name, p.color as project_color,
+                   u1.display_name as creator_name,
+                   u2.display_name as assignee_name
+            FROM tasks t 
+            LEFT JOIN projects p ON t.project_id = p.id
+            LEFT JOIN users u1 ON t.user_id = u1.id
+            LEFT JOIN users u2 ON t.assignee_id = u2.id
+            WHERE t.user_id = ? OR t.assignee_id = ?
+        `;
+        const params: unknown[] = [user.id, user.id];
 
         if (status) { query += " AND t.status = ?"; params.push(status); }
         if (projectId) { query += " AND t.project_id = ?"; params.push(projectId); }
@@ -79,7 +89,7 @@ export async function GET(req: NextRequest) {
         query += " ORDER BY CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, t.created_at DESC";
 
         const tasks = db.prepare(query).all(...params);
-        return NextResponse.json({ tasks });
+        return NextResponse.json({ tasks, currentUser: user.id });
     } finally {
         db.close();
     }
@@ -91,7 +101,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const { title, description, priority, due_date, project_id } = body;
+    const { title, description, priority, due_date, project_id, assignee_id } = body;
 
     if (!title) return NextResponse.json({ error: "Title is required" }, { status: 400 });
 
@@ -99,9 +109,9 @@ export async function POST(req: NextRequest) {
     try {
         const id = crypto.randomUUID();
         db.prepare(`
-            INSERT INTO tasks (id, project_id, user_id, title, description, priority, due_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(id, project_id || null, user.id, title, description || "", priority || "medium", due_date || null);
+            INSERT INTO tasks (id, project_id, user_id, assignee_id, title, description, priority, due_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, project_id || null, user.id, assignee_id || null, title, description || "", priority || "medium", due_date || null);
 
         const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
         return NextResponse.json({ task });
@@ -138,9 +148,9 @@ export async function PATCH(req: NextRequest) {
 
         if (fields.length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 });
         fields.push("updated_at = datetime('now')");
-        values.push(id, user.id);
+        values.push(id, user.id, user.id);
 
-        db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...values);
+        db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND (user_id = ? OR assignee_id = ?)`).run(...values);
         const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
         return NextResponse.json({ task });
     } finally {
@@ -159,7 +169,7 @@ export async function DELETE(req: NextRequest) {
 
     const db = getDb();
     try {
-        const result = db.prepare("DELETE FROM tasks WHERE id = ? AND user_id = ?").run(id, user.id);
+        const result = db.prepare("DELETE FROM tasks WHERE id = ? AND (user_id = ? OR assignee_id = ?)").run(id, user.id, user.id);
         return NextResponse.json({ success: (result as any).changes > 0 });
     } finally {
         db.close();

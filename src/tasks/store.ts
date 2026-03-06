@@ -23,6 +23,7 @@ export interface Task {
     id: string;
     project_id: string | null;
     user_id: string;
+    assignee_id: string | null;
     title: string;
     description: string;
     priority: "high" | "medium" | "low";
@@ -77,6 +78,7 @@ function getDb(): Database.Database {
             id TEXT PRIMARY KEY,
             project_id TEXT,
             user_id TEXT NOT NULL,
+            assignee_id TEXT,
             title TEXT NOT NULL,
             description TEXT DEFAULT '',
             priority TEXT DEFAULT 'medium',
@@ -100,10 +102,18 @@ function getDb(): Database.Database {
         );
 
         CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(user_id, status);
         CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
         CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders(trigger_at, sent);
     `);
+
+    // Migration: add assignee_id if it doesn't exist
+    try {
+        db.exec("ALTER TABLE tasks ADD COLUMN assignee_id TEXT");
+    } catch (e) {
+        // Ignore if column already exists
+    }
 
     return db;
 }
@@ -163,15 +173,15 @@ export function updateProject(id: string, userId: string, updates: Partial<Pick<
 export function createTask(
     userId: string,
     title: string,
-    opts: { projectId?: string; description?: string; priority?: "high" | "medium" | "low"; dueDate?: string } = {}
+    opts: { projectId?: string; assigneeId?: string; description?: string; priority?: "high" | "medium" | "low"; dueDate?: string } = {}
 ): Task {
     const db = getDb();
     try {
         const id = crypto.randomUUID();
         db.prepare(`
-            INSERT INTO tasks (id, project_id, user_id, title, description, priority, due_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(id, opts.projectId || null, userId, title, opts.description || "", opts.priority || "medium", opts.dueDate || null);
+            INSERT INTO tasks (id, project_id, user_id, assignee_id, title, description, priority, due_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, opts.projectId || null, userId, opts.assigneeId || null, title, opts.description || "", opts.priority || "medium", opts.dueDate || null);
 
         return db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task;
     } finally {
@@ -182,8 +192,8 @@ export function createTask(
 export function listTasks(userId: string, filters?: { status?: string; projectId?: string }): Task[] {
     const db = getDb();
     try {
-        let query = "SELECT * FROM tasks WHERE user_id = ?";
-        const params: unknown[] = [userId];
+        let query = "SELECT * FROM tasks WHERE (user_id = ? OR assignee_id = ?)";
+        const params: unknown[] = [userId, userId];
 
         if (filters?.status) {
             query += " AND status = ?";
@@ -224,9 +234,10 @@ export function updateTask(id: string, userId: string, updates: Partial<Pick<Tas
 
         if (fields.length === 0) return null;
         fields.push("updated_at = datetime('now')");
-        values.push(id, userId);
+        // Ensure that either the creator or the assignee can update the task
+        values.push(id, userId, userId);
 
-        db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`).run(...values);
+        db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND (user_id = ? OR assignee_id = ?)`).run(...values);
         return db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | null;
     } finally {
         db.close();
@@ -236,7 +247,7 @@ export function updateTask(id: string, userId: string, updates: Partial<Pick<Tas
 export function deleteTask(id: string, userId: string): boolean {
     const db = getDb();
     try {
-        const result = db.prepare("DELETE FROM tasks WHERE id = ? AND user_id = ?").run(id, userId);
+        const result = db.prepare("DELETE FROM tasks WHERE id = ? AND (user_id = ? OR assignee_id = ?)").run(id, userId, userId);
         return result.changes > 0;
     } finally {
         db.close();
@@ -246,7 +257,7 @@ export function deleteTask(id: string, userId: string): boolean {
 export function getTaskStats(userId: string): TaskStats {
     const db = getDb();
     try {
-        const all = db.prepare("SELECT * FROM tasks WHERE user_id = ?").all(userId) as Task[];
+        const all = db.prepare("SELECT * FROM tasks WHERE user_id = ? OR assignee_id = ?").all(userId, userId) as Task[];
         const now = new Date().toISOString();
 
         return {

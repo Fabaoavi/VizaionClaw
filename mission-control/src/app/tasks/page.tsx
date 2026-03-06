@@ -26,6 +26,9 @@ interface Task {
     completed_at: string | null;
     project_name?: string;
     project_color?: string;
+    creator_name?: string;
+    assignee_name?: string;
+    assignee_id?: string | null;
 }
 
 interface Project {
@@ -44,6 +47,8 @@ export default function TasksPage() {
     const [selectedProject, setSelectedProject] = useState<string | null>(null);
     const [showNewTask, setShowNewTask] = useState(false);
     const [showNewProject, setShowNewProject] = useState(false);
+    const [currentUser, setCurrentUser] = useState<string | null>(null);
+    const [filterType, setFilterType] = useState<'all' | 'personal' | 'delegated' | 'shared'>('all');
 
     // New task form
     const [newTitle, setNewTitle] = useState('');
@@ -64,6 +69,7 @@ export default function TasksPage() {
             if (taskRes.ok) {
                 const data = await taskRes.json();
                 setTasks(data.tasks || []);
+                setCurrentUser(data.currentUser || null);
             }
             if (projRes.ok) {
                 const data = await projRes.json();
@@ -121,9 +127,22 @@ export default function TasksPage() {
         fetchData();
     };
 
-    const todo = tasks.filter(t => t.status === 'todo');
-    const progress = tasks.filter(t => t.status === 'progress');
-    const done = tasks.filter(t => t.status === 'done');
+    const filteredTasks = tasks.filter(t => {
+        if (filterType === 'all') return true;
+
+        const isCreator = t.user_id === currentUser;
+        const isAssignee = t.assignee_id === currentUser;
+        const isUnassigned = !t.assignee_id;
+
+        if (filterType === 'personal') return isCreator && (isUnassigned || isAssignee);
+        if (filterType === 'delegated') return isCreator && t.assignee_id && !isAssignee;
+        if (filterType === 'shared') return isAssignee && !isCreator;
+        return true;
+    });
+
+    const todo = filteredTasks.filter(t => t.status === 'todo');
+    const progress = filteredTasks.filter(t => t.status === 'progress');
+    const done = filteredTasks.filter(t => t.status === 'done');
 
     if (loading) return <div className="page-header"><h1>✅ Tasks & Projects</h1><p>Loading...</p></div>;
 
@@ -195,28 +214,45 @@ export default function TasksPage() {
                 </div>
             )}
 
-            {/* Project Filter */}
-            {projects.length > 0 && (
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-xl)', flexWrap: 'wrap' }}>
-                    <button
-                        className={`btn ${!selectedProject ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setSelectedProject(null)}
-                    >
-                        All
-                    </button>
-                    {projects.map(p => (
+            {/* Project & Type Filter */}
+            <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)', flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-xs)', background: 'var(--bg-deep)', padding: 4, borderRadius: 8 }}>
+                    {(['all', 'personal', 'delegated', 'shared'] as const).map(type => (
                         <button
-                            key={p.id}
-                            className={`btn ${selectedProject === p.id ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setSelectedProject(selectedProject === p.id ? null : p.id)}
-                            style={selectedProject === p.id ? { background: p.color, borderColor: p.color } : {}}
+                            key={type}
+                            className={`btn ${filterType === type ? 'btn-primary' : ''}`}
+                            style={filterType !== type ? { background: 'transparent', border: 'none', color: 'var(--text-muted)' } : {}}
+                            onClick={() => setFilterType(type)}
                         >
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block', marginRight: 6 }} />
-                            {p.name} ({p.task_count})
+                            {type.charAt(0).toUpperCase() + type.slice(1)}
                         </button>
                     ))}
                 </div>
-            )}
+
+                <div style={{ width: 1, height: 24, background: 'var(--border-color)', margin: '0 8px' }} />
+
+                {projects.length > 0 && (
+                    <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                        <button
+                            className={`btn ${!selectedProject ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setSelectedProject(null)}
+                        >
+                            All Projects
+                        </button>
+                        {projects.map(p => (
+                            <button
+                                key={p.id}
+                                className={`btn ${selectedProject === p.id ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setSelectedProject(selectedProject === p.id ? null : p.id)}
+                                style={selectedProject === p.id ? { background: p.color, borderColor: p.color } : {}}
+                            >
+                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block', marginRight: 6 }} />
+                                {p.name}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             {/* Kanban Board */}
             <div className="kanban-board">
@@ -251,8 +287,13 @@ export default function TasksPage() {
                                         </button>
                                     </div>
                                     {task.project_name && (
-                                        <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: `${task.project_color || '#F5A623'}22`, color: task.project_color || '#F5A623', display: 'inline-block', marginTop: 4 }}>
+                                        <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: `${task.project_color || '#F5A623'}22`, color: task.project_color || '#F5A623', display: 'inline-block', marginTop: 4, marginRight: 6 }}>
                                             {task.project_name}
+                                        </span>
+                                    )}
+                                    {task.assignee_id && task.assignee_id !== task.user_id && (
+                                        <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)', display: 'inline-block', marginTop: 4 }}>
+                                            {task.user_id === currentUser ? `To: ${task.assignee_name || 'Unknown'}` : `From: ${task.creator_name || 'Unknown'}`}
                                         </span>
                                     )}
                                     {task.due_date && (

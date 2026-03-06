@@ -7,6 +7,7 @@ import {
     createTask, listTasks, updateTask, deleteTask,
     createReminder, listReminders,
 } from "../tasks/store.js";
+import { searchUsers } from "../users/identity.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export const taskToolDefinitions: ChatCompletionTool[] = [
                     priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level (default: medium)" },
                     due_date: { type: "string", description: "Due date in ISO 8601 format (e.g. 2026-03-10T09:00:00Z)" },
                     project_name: { type: "string", description: "Name of existing project to attach to (optional)" },
+                    assign_to_user: { type: "string", description: "Name or mention of a user to assign this task to (optional)" },
                 },
                 required: ["title"],
             },
@@ -134,8 +136,21 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
             }
         }
 
+        let assigneeId: string | undefined;
+        let assignMsg = "";
+        if (input.assign_to_user) {
+            const matches = searchUsers(String(input.assign_to_user));
+            if (matches.length > 0) {
+                assigneeId = matches[0].id;
+                assignMsg = ` (Assigned to ${matches[0].display_name})`;
+            } else {
+                assignMsg = ` (Could not find user "${input.assign_to_user}" to assign)`;
+            }
+        }
+
         const task = createTask(userId, String(input.title), {
             projectId,
+            assigneeId,
             description: input.description ? String(input.description) : undefined,
             priority: (input.priority as "high" | "medium" | "low") || "medium",
             dueDate: input.due_date ? String(input.due_date) : undefined,
@@ -143,8 +158,8 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
 
         return JSON.stringify({
             success: true,
-            task: { id: task.id, title: task.title, priority: task.priority, status: task.status, due_date: task.due_date },
-            message: `Task "${task.title}" created successfully.`,
+            task: { id: task.id, title: task.title, priority: task.priority, status: task.status, due_date: task.due_date, assignee_id: task.assignee_id },
+            message: `Task "${task.title}" created successfully.${assignMsg}`,
         });
     },
 
