@@ -14,6 +14,7 @@ import { initScheduler, setupHeartbeat, startReminderLoop, stopAllTasks } from "
 import { getHealthStatus } from "./health.js";
 import { initUserDB, closeUserDB } from "./users/identity.js";
 import { initAuthStore, closeAuthStore } from "./auth/store.js";
+import { initConnectionsStore, closeConnectionsStore } from "./connections/store.js";
 
 async function main(): Promise<void> {
     console.log(`
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
     initMemoryDB();
     initUserDB(); // User identity system (per-user memory isolation)
     initAuthStore(); // Auth tokens, 2FA codes, and sessions
+    initConnectionsStore(); // OAuth connections per user
     await initPinecone(); // Vector memory (auto-creates index if needed)
     initLLM(config);
     await fetchOpenRouterModels(config.openRouterApiKey || process.env.OPENROUTER_API_KEY);
@@ -87,6 +89,7 @@ async function main(): Promise<void> {
         closeMemoryDB();
         closeUserDB();
         closeAuthStore();
+        closeConnectionsStore();
         bot.stop();
         process.exit(0);
     };

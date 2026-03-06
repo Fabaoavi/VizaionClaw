@@ -12,6 +12,11 @@ import * as switchModel from "./switch_model.js";
 import { taskToolDefinitions, taskToolHandlers } from "./tasks.js";
 import { getMCPToolDefinitions, executeMCPTool } from "../mcp/bridge.js";
 
+// Connection Manager Tools
+import * as googleTools from "./google.js";
+import * as metaTools from "./meta.js";
+import * as ionosTools from "./ionos.js";
+
 // ── Static tool definitions ─────────────────────────────────────
 
 const staticDefinitions: ChatCompletionTool[] = [
@@ -23,6 +28,9 @@ const staticDefinitions: ChatCompletionTool[] = [
     imageGen.definition,
     switchModel.definition,
     ...taskToolDefinitions,
+    ...googleTools.definitions,
+    ...metaTools.definitions,
+    ...ionosTools.definitions,
 ];
 
 /**
@@ -48,6 +56,9 @@ const handlers: Record<string, ToolHandler> = {
     image_generate: (input) => imageGen.execute(input as { prompt: string; size?: string }),
     switch_model: (input) => switchModel.execute(input as { modelName: string }),
     ...taskToolHandlers,
+    google_calendar_list_events: (input, userId) => googleTools.executeCalendarListEvents(input as { maxResults?: number }, userId),
+    meta_get_page_profile: () => metaTools.executeGetPageProfile(),
+    ionos_get_datacenters: () => ionosTools.executeGetDatacenters(),
 };
 
 export async function executeTool(
