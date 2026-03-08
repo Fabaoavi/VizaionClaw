@@ -8,12 +8,12 @@ export async function GET(req: NextRequest) {
     const scopesParam = searchParams.get("scopes") || "";
 
     if (!userId) {
-        return NextResponse.json({ error: "Missing userId" }, { status: 400 });
+        return NextResponse.redirect(`${process.env.MC_BASE_URL || "http://localhost:3000"}/connections?error=missing_userId`);
     }
 
     const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
     if (!GOOGLE_CLIENT_ID) {
-        return NextResponse.json({ error: "Google OAuth is not configured on the server." }, { status: 500 });
+        return NextResponse.redirect(`${process.env.MC_BASE_URL || "http://localhost:3000"}/connections?error=missing_google_client_id`);
     }
 
     // Default basic scopes

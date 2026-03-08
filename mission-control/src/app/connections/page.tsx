@@ -49,8 +49,8 @@ const DEFAULT_CONNECTIONS: Connection[] = [
         icon: Facebook,
         color: '#1877F2',
         active: false,
-        isGlobal: true,
-        actionType: "global_only"
+        actionType: "oauth",
+        canDisconnect: true
     },
     {
         id: 'ionos',
@@ -91,7 +91,7 @@ function ConnectionsContent() {
                     if (c.id === "google") {
                         isActive = userConns.some((uc: any) => uc.provider === "google" && uc.status === "connected");
                     } else if (c.id === "meta") {
-                        isActive = globals.meta;
+                        isActive = userConns.some((uc: any) => uc.provider === "meta" && uc.status === "connected");
                     } else if (c.id === "ionos") {
                         isActive = globals.ionos;
                     }
@@ -110,10 +110,13 @@ function ConnectionsContent() {
     }, []);
 
     const handleConnectClick = (conn: Connection) => {
-        if (conn.actionType === "oauth" && conn.id === "google" && userId) {
-            // Full CRUD scope example
+        if (!userId) return;
+
+        if (conn.actionType === "oauth" && conn.id === "google") {
             const scopes = "gmail,drive,calendar";
             window.location.href = `/api/auth/google?userId=${userId}&scopes=${scopes}`;
+        } else if (conn.actionType === "oauth" && conn.id === "meta") {
+            window.location.href = `/api/auth/meta?userId=${userId}`;
         }
     };
 
@@ -150,6 +153,12 @@ function ConnectionsContent() {
             {searchParams?.get("success") === "google_connected" && (
                 <div style={{ padding: "10px", background: "var(--success-bg, #d4edda)", color: "var(--success-text, #155724)", borderRadius: "6px", marginBottom: "20px" }}>
                     ✅ Google account successfully connected!
+                </div>
+            )}
+
+            {searchParams?.get("success") === "meta_connected" && (
+                <div style={{ padding: "10px", background: "var(--success-bg, #d4edda)", color: "var(--success-text, #155724)", borderRadius: "6px", marginBottom: "20px" }}>
+                    ✅ Meta/Facebook account successfully connected!
                 </div>
             )}
 

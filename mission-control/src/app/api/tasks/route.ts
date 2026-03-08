@@ -48,6 +48,11 @@ function getDb() {
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
         );
     `);
+
+    try {
+        db.exec("ALTER TABLE tasks ADD COLUMN assignee_id TEXT;");
+    } catch (e) { /* ignore, column already exists */ }
+
     return db;
 }
 
