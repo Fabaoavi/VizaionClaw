@@ -10,8 +10,9 @@ import { initWhisper } from "./voice/whisper.js";
 import { initElevenLabs } from "./voice/elevenlabs.js";
 import { loadMCPServers, closeMCPServers } from "./mcp/bridge.js";
 import { loadSkills } from "./skills/loader.js";
-import { initScheduler, setupHeartbeat, startReminderLoop, stopAllTasks } from "./proactive/scheduler.js";
+import { initScheduler, setupHeartbeat, setupAgenticHeartbeat, startReminderLoop, stopAllTasks } from "./proactive/scheduler.js";
 import { getHealthStatus } from "./health.js";
+import { runAgentLoop } from "./agent.js";
 import { initUserDB, closeUserDB } from "./users/identity.js";
 import { initAuthStore, closeAuthStore } from "./auth/store.js";
 import { initConnectionsStore, closeConnectionsStore } from "./connections/store.js";
@@ -62,6 +63,12 @@ async function main(): Promise<void> {
                 return `⚠️ *Health Alert*\nError rate: ${health.errorRate}\nRecent: ${health.recentErrors.map(e => e.error).join(", ")}`;
             }
             return null;
+        });
+
+        // Agentic Heartbeat: Bot wakes up every 30 minutes to check if it needs to ping user
+        setupAgenticHeartbeat(30, async (prompt: string) => {
+            const loopStatus = await runAgentLoop(prompt, config, userId, String(userId));
+            return loopStatus.reply;
         });
 
         // Start reminder check loop (every 60 seconds)

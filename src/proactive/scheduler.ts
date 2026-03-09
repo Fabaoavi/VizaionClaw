@@ -171,6 +171,26 @@ export function setupHeartbeat(intervalMinutes: number, checkFn: () => Promise<s
     }, `every ${intervalMinutes}m`);
 }
 
+export function setupAgenticHeartbeat(intervalMinutes: number, agentFn: (prompt: string) => Promise<string>): void {
+    scheduleTask("agentic_heartbeat", "Agentic Proactive Heartbeat", intervalMinutes * 60 * 1000, async () => {
+        const prompt = `[SYSTEM PROACTIVE HEARTBEAT]
+It is currently ${new Date().toLocaleString()}. Check your memory and pending tasks. 
+If there is an important task that is due, a follow-up you missed, or anything urgent you must proactively tell the user right now, write the message. 
+If there is absolutely NOTHING to say, you MUST reply EXACTLY with 'NO_MESSAGE' and nothing else.`;
+
+        const response = await agentFn(prompt);
+        if (response.trim() === "NO_MESSAGE" || response.includes("NO_MESSAGE")) {
+            return ""; // Silent failure, working as intended
+        }
+
+        const text = `📬 *Proactive Ping*\n\n${response}`;
+        for (const [userId, sender] of userSenders) {
+            try { await sender(text); } catch (e) { console.warn(`Failed to send agentic heartbeat to ${userId}`); }
+        }
+        return "";
+    }, `every ${intervalMinutes}m`);
+}
+
 // ── Reminder System ──────────────────────────────────────────────
 
 /**
