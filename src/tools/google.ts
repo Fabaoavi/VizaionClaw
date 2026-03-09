@@ -193,14 +193,14 @@ export async function executeCalendarCreateEvent(input: { summary: string, descr
     }
 }
 
-export async function executeGmailSearch(input: { query?: string, maxResults?: number }, userId?: string): Promise<string> {
+export async function executeGmailSearch(input: { query?: string, maxResults?: any }, userId?: string): Promise<string> {
     if (!userId) return "Error: userId is required.";
     const connection = getConnection(userId, "google");
     if (!connection || connection.status !== "connected" || !connection.access_token) return "Error: User has not connected Google.";
     if (!connection.scopes.includes("mail.google.com") && !connection.scopes.includes("gmail")) return "Error: User hasn't granted Gmail scopes. Tell user to enable Gmail scope in connections.";
 
     const query = input.query || "in:inbox";
-    const maxResults = input.maxResults || 5;
+    const maxResults = typeof input.maxResults === 'string' ? parseInt(input.maxResults, 10) : (input.maxResults || 5);
 
     try {
         const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`, {

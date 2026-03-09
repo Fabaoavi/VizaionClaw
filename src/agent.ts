@@ -30,7 +30,12 @@ Available tools:
 - switch_model — change to a stronger/faster/cheaper LLM mid-conversation
 
 Always use memory_store to remember important things the user tells you.
-Always search your memory before answering questions about the user.`;
+Always search your memory before answering questions about the user.
+
+CRITICAL INSTRUCTIONS FOR TOOLS:
+- When executing tools that require IDs (like reading an email or file), you MUST first use a search tool to get the IDs. 
+- NEVER attempt to search and read in the exact same step, as you will hallucinate the ID.
+- Do NOT output raw JSON blocks. Use the native tool call API.`;
 
 const sessions = new Map<number, string>();
 
@@ -92,17 +97,48 @@ export async function runAgentLoop(
         if (response.toolCalls.length === 0) {
             let reply = response.content ?? "(no response)";
 
-            // Re-inject reasoning into the reply explicitly so it logs properly
-            if (response.reasoning && !reply.includes('<think>')) {
-                reply = `<think>\n${response.reasoning}\n</think>\n\n${reply}`;
+            // Intercept Groq/LLaMA JSON hallucination bug
+            if (reply.includes('{"type":') && reply.includes('"function"')) {
+                const lines = reply.split('\n');
+                let foundHiddenToolCalls = false;
+
+                for (const line of lines) {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine.startsWith('{"type":') && trimmedLine.endsWith('}')) {
+                        try {
+                            const parsed = JSON.parse(trimmedLine);
+                            if (parsed.type === "function" && parsed.name && parsed.parameters) {
+                                response.toolCalls.push({
+                                    id: `call_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                                    name: parsed.name,
+                                    arguments: JSON.stringify(parsed.parameters)
+                                });
+                                foundHiddenToolCalls = true;
+                                reply = reply.replace(trimmedLine, '').trim();
+                            }
+                        } catch { /* ignore JSON parse failures */ }
+                    }
+                }
+
+                if (foundHiddenToolCalls) {
+                    response.content = reply; // Strip out the JSON strings so it looks clean in memory
+                }
             }
 
-            storeConversation(sessionId, "assistant", reply);
+            // If it's truly a regular message after attempting to intercept hidden tool calls
+            if (response.toolCalls.length === 0) {
+                // Re-inject reasoning into the reply explicitly so it logs properly
+                if (response.reasoning && !reply.includes('<think>')) {
+                    reply = `<think>\n${response.reasoning}\n</think>\n\n${reply}`;
+                }
 
-            // Fire auto fact extraction asynchronously (don't block response)
-            extractAndStore(userMessage, reply, memoryUserId).catch(() => { });
+                storeConversation(sessionId, "assistant", reply);
 
-            return { reply, modelUsed: finalModelUsed, totalTokens };
+                // Fire auto fact extraction asynchronously (don't block response)
+                extractAndStore(userMessage, reply, memoryUserId).catch(() => { });
+
+                return { reply, modelUsed: finalModelUsed, totalTokens };
+            }
         }
 
         messages.push({
