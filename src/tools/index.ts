@@ -57,6 +57,10 @@ const handlers: Record<string, ToolHandler> = {
     switch_model: (input) => switchModel.execute(input as { modelName: string }),
     ...taskToolHandlers,
     google_calendar_list_events: (input, userId) => googleTools.executeCalendarListEvents(input as { maxResults?: number }, userId),
+    google_calendar_create_event: (input, userId) => googleTools.executeCalendarCreateEvent(input as any, userId),
+    google_gmail_search: (input, userId) => googleTools.executeGmailSearch(input as any, userId),
+    google_gmail_read: (input, userId) => googleTools.executeGmailRead(input as any, userId),
+    google_drive_search: (input, userId) => googleTools.executeDriveSearch(input as any, userId),
     meta_get_page_profile: () => metaTools.executeGetPageProfile(),
     ionos_get_datacenters: () => ionosTools.executeGetDatacenters(),
 };
