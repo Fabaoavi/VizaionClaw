@@ -47,11 +47,25 @@ function getDb() {
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS task_edges (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (source_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (target_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            UNIQUE(source_id, target_id)
+        );
     `);
 
     try {
         db.exec("ALTER TABLE tasks ADD COLUMN assignee_id TEXT;");
     } catch (e) { /* ignore, column already exists */ }
+
+    try {
+        db.exec("ALTER TABLE tasks ADD COLUMN canvas_x REAL DEFAULT 0;");
+        db.exec("ALTER TABLE tasks ADD COLUMN canvas_y REAL DEFAULT 0;");
+    } catch (e) { /* ignore, columns already exist */ }
 
     return db;
 }
@@ -150,6 +164,8 @@ export async function PATCH(req: NextRequest) {
         }
         if (due_date !== undefined) { fields.push("due_date = ?"); values.push(due_date); }
         if (project_id !== undefined) { fields.push("project_id = ?"); values.push(project_id); }
+        if (body.canvas_x !== undefined) { fields.push("canvas_x = ?"); values.push(body.canvas_x); }
+        if (body.canvas_y !== undefined) { fields.push("canvas_y = ?"); values.push(body.canvas_y); }
 
         if (fields.length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 });
         fields.push("updated_at = datetime('now')");

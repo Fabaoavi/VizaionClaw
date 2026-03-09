@@ -6,6 +6,7 @@ import {
     createProject, listProjects,
     createTask, listTasks, updateTask, deleteTask,
     createReminder, listReminders,
+    linkTasks, listTaskEdges
 } from "../tasks/store.js";
 import { searchUsers } from "../users/identity.js";
 
@@ -73,6 +74,21 @@ export const taskToolDefinitions: ChatCompletionTool[] = [
                     task_title: { type: "string", description: "Title (or partial title) of the task to delete" },
                 },
                 required: ["task_title"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "task_link",
+            description: "Link two tasks together to represent a dependency or relationship in the user's Node Graph.",
+            parameters: {
+                type: "object",
+                properties: {
+                    source_task_title: { type: "string", description: "Title (or partial title) of the first task" },
+                    target_task_title: { type: "string", description: "Title (or partial title) of the second task that the first task connects to" },
+                },
+                required: ["source_task_title", "target_task_title"],
             },
         },
     },
@@ -184,15 +200,27 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
         const projects = listProjects(userId);
         const projectMap = Object.fromEntries(projects.map(p => [p.id, p.name]));
 
+        // Get relationships
+        const edges = listTaskEdges(userId);
+
         return JSON.stringify({
-            tasks: tasks.map(t => ({
-                title: t.title,
-                status: t.status,
-                priority: t.priority,
-                project: t.project_id ? projectMap[t.project_id] || "Unknown" : "No Project",
-                due_date: t.due_date,
-                description: t.description || undefined,
-            })),
+            tasks: tasks.map(t => {
+                // Find what this task points to
+                const related = edges
+                    .filter(e => e.source_id === t.id)
+                    .map(e => tasks.find(x => x.id === e.target_id)?.title)
+                    .filter(Boolean);
+
+                return {
+                    title: t.title,
+                    status: t.status,
+                    priority: t.priority,
+                    project: t.project_id ? projectMap[t.project_id] || "Unknown" : "No Project",
+                    due_date: t.due_date,
+                    description: t.description || undefined,
+                    related_to: related.length > 0 ? related : undefined
+                };
+            }),
             total: tasks.length,
         });
     },
@@ -230,6 +258,25 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
 
         deleteTask(match.id, userId);
         return JSON.stringify({ success: true, message: `Task "${match.title}" deleted.` });
+    },
+
+    task_link: (input, userId) => {
+        const tasks = listTasks(userId);
+        const sourceTitle = String(input.source_task_title).toLowerCase();
+        const targetTitle = String(input.target_task_title).toLowerCase();
+
+        const sourceMatch = tasks.find(t => t.title.toLowerCase().includes(sourceTitle));
+        const targetMatch = tasks.find(t => t.title.toLowerCase().includes(targetTitle));
+
+        if (!sourceMatch) return JSON.stringify({ success: false, message: `Could not find source task matching "${input.source_task_title}".` });
+        if (!targetMatch) return JSON.stringify({ success: false, message: `Could not find target task matching "${input.target_task_title}".` });
+        if (sourceMatch.id === targetMatch.id) return JSON.stringify({ success: false, message: "Cannot link a task to itself." });
+
+        const success = linkTasks(sourceMatch.id, targetMatch.id, userId);
+        if (success) {
+            return JSON.stringify({ success: true, message: `Successfully linked "${sourceMatch.title}" -> "${targetMatch.title}".` });
+        }
+        return JSON.stringify({ success: false, message: "Failed to link tasks. You may lack permission, or the link already exists." });
     },
 
     project_create: (input, userId) => {

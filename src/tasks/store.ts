@@ -254,6 +254,45 @@ export function deleteTask(id: string, userId: string): boolean {
     }
 }
 
+export function listTaskEdges(userId: string): { source_id: string; target_id: string }[] {
+    const db = getDb();
+    try {
+        const query = `
+            SELECT e.source_id, e.target_id 
+            FROM task_edges e
+            JOIN tasks t1 ON e.source_id = t1.id
+            JOIN tasks t2 ON e.target_id = t2.id
+            WHERE (t1.user_id = ? OR t1.assignee_id = ?)
+               OR (t2.user_id = ? OR t2.assignee_id = ?)
+        `;
+        return db.prepare(query).all(userId, userId, userId, userId) as { source_id: string; target_id: string }[];
+    } finally {
+        db.close();
+    }
+}
+
+export function linkTasks(sourceId: string, targetId: string, userId: string): boolean {
+    const db = getDb();
+    try {
+        const authCheck = db.prepare(`
+            SELECT id FROM tasks 
+            WHERE id IN (?, ?) 
+            AND (user_id = ? OR assignee_id = ?)
+        `).get(sourceId, targetId, userId, userId);
+
+        if (!authCheck) return false;
+
+        db.prepare(`
+            INSERT OR IGNORE INTO task_edges (id, source_id, target_id)
+            VALUES (?, ?, ?)
+        `).run(crypto.randomUUID(), sourceId, targetId);
+
+        return true;
+    } finally {
+        db.close();
+    }
+}
+
 export function getTaskStats(userId: string): TaskStats {
     const db = getDb();
     try {

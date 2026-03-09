@@ -6,11 +6,12 @@ import {
     Plus,
     FolderOpen,
     Clock,
-    AlertCircle,
     X,
-    ChevronRight,
     Trash2,
+    Users
 } from 'lucide-react';
+import { TaskCanvas } from '@/components/TaskCanvas';
+import { TaskCalendar, CalendarEvent } from '@/components/TaskCalendar';
 
 interface Task {
     id: string;
@@ -21,6 +22,8 @@ interface Task {
     priority: 'high' | 'medium' | 'low';
     status: 'todo' | 'progress' | 'done';
     due_date: string | null;
+    canvas_x?: number;
+    canvas_y?: number;
     created_at: string;
     updated_at: string;
     completed_at: string | null;
@@ -40,15 +43,22 @@ interface Project {
     task_count: number;
 }
 
+interface TaskEdge {
+    id: string;
+    source_id: string;
+    target_id: string;
+}
+
 export default function TasksPage() {
     const [tasks, setTasks] = useState<Task[]>([]);
+    const [taskEdges, setTaskEdges] = useState<TaskEdge[]>([]);
+    const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedProject, setSelectedProject] = useState<string | null>(null);
     const [showNewTask, setShowNewTask] = useState(false);
     const [showNewProject, setShowNewProject] = useState(false);
     const [currentUser, setCurrentUser] = useState<string | null>(null);
-    const [filterType, setFilterType] = useState<'all' | 'personal' | 'delegated' | 'shared'>('all');
 
     // New task form
     const [newTitle, setNewTitle] = useState('');
@@ -62,21 +72,50 @@ export default function TasksPage() {
 
     const fetchData = useCallback(async () => {
         try {
-            const [taskRes, projRes] = await Promise.all([
+            const [taskRes, projRes, edgeRes, calRes] = await Promise.all([
                 fetch(`/api/tasks${selectedProject ? `?project_id=${selectedProject}` : ''}`),
                 fetch('/api/projects'),
+                fetch('/api/tasks/edges'),
+                fetch('/api/calendar')
             ]);
+
+            let fetchedTasks: Task[] = [];
             if (taskRes.ok) {
                 const data = await taskRes.json();
-                setTasks(data.tasks || []);
+                fetchedTasks = data.tasks || [];
+                setTasks(fetchedTasks);
                 setCurrentUser(data.currentUser || null);
             }
             if (projRes.ok) {
                 const data = await projRes.json();
                 setProjects(data.projects || []);
             }
+            if (edgeRes.ok) {
+                const data = await edgeRes.json();
+                setTaskEdges(data.edges || []);
+            }
+
+            let gEvents: CalendarEvent[] = [];
+            if (calRes.ok) {
+                const data = await calRes.json();
+                gEvents = data.events || [];
+            }
+
+            // Combine local tasks into calendar events
+            const localEvents: CalendarEvent[] = fetchedTasks.filter(t => t.due_date).map(t => ({
+                id: t.id,
+                title: t.title,
+                date: t.due_date!.split('T')[0],
+                color: t.project_color || (t.priority === 'high' ? '#F53A3A' : t.priority === 'medium' ? '#F5A623' : '#3AF5A6'),
+                type: 'local',
+                isShared: t.assignee_id !== null && t.assignee_id !== t.user_id,
+                sharedBy: t.creator_name
+            }));
+
+            setCalendarEvents([...gEvents, ...localEvents]);
+
         } catch (err) {
-            console.error('Failed to fetch tasks:', err);
+            console.error('Failed to fetch data:', err);
         } finally {
             setLoading(false);
         }
@@ -127,43 +166,69 @@ export default function TasksPage() {
         fetchData();
     };
 
-    const filteredTasks = tasks.filter(t => {
-        if (filterType === 'all') return true;
+    const handleNodeDragStop = async (id: string, x: number, y: number) => {
+        // Update local state instantly avoiding jitter
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, canvas_x: x, canvas_y: y } : t));
+        // Persist DB
+        await fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, canvas_x: x, canvas_y: y }),
+        });
+    };
 
-        const isCreator = t.user_id === currentUser;
-        const isAssignee = t.assignee_id === currentUser;
-        const isUnassigned = !t.assignee_id;
+    const handleConnectTasks = async (source: string, target: string) => {
+        const res = await fetch('/api/tasks/edges', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_id: source, target_id: target }),
+        });
+        if (res.ok) fetchData();
+    };
 
-        if (filterType === 'personal') return isCreator && (isUnassigned || isAssignee);
-        if (filterType === 'delegated') return isCreator && t.assignee_id && !isAssignee;
-        if (filterType === 'shared') return isAssignee && !isCreator;
-        return true;
+    const handleDeleteEdge = async (edgeId: string) => {
+        const res = await fetch(`/api/tasks/edges?id=${edgeId}`, { method: 'DELETE' });
+        if (res.ok) fetchData();
+    };
+
+    if (loading) return <div className="page-header"><h1>✅ Workspace</h1><p>Loading...</p></div>;
+
+    // Filter logic for prioritized left list
+    let listTasks = [...tasks];
+
+    // Sort logic (Incomplete first, then Priority, then Date)
+    listTasks.sort((a, b) => {
+        if (a.status === 'done' && b.status !== 'done') return 1;
+        if (a.status !== 'done' && b.status === 'done') return -1;
+
+        const priorityScore = { high: 3, medium: 2, low: 1 };
+        const pA = priorityScore[a.priority] || 0;
+        const pB = priorityScore[b.priority] || 0;
+        if (pA !== pB) return pB - pA; // Higher first
+
+        if (a.due_date && b.due_date) return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+        if (a.due_date) return -1;
+        if (b.due_date) return 1;
+        return 0;
     });
 
-    const todo = filteredTasks.filter(t => t.status === 'todo');
-    const progress = filteredTasks.filter(t => t.status === 'progress');
-    const done = filteredTasks.filter(t => t.status === 'done');
-
-    if (loading) return <div className="page-header"><h1>✅ Tasks & Projects</h1><p>Loading...</p></div>;
-
     return (
-        <>
-            <div className="page-header">
-                <h1>✅ Tasks & Projects</h1>
-                <p>{tasks.length} tasks · {projects.length} projects</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)', height: 'calc(100vh - 80px)' }}>
+
+            <div className="page-header" style={{ flexShrink: 0 }}>
+                <h1>✅ Workspace</h1>
+                <p>Manage schedule, layout nodes, and shared tasks.</p>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+                    <button className="btn btn-primary" onClick={() => setShowNewTask(true)}>
+                        <Plus size={14} /> New Task
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => setShowNewProject(true)}>
+                        <FolderOpen size={14} /> New Project
+                    </button>
+                </div>
             </div>
 
-            {/* Action Bar */}
-            <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-xl)' }}>
-                <button className="btn btn-primary" onClick={() => setShowNewTask(true)}>
-                    <Plus size={14} /> New Task
-                </button>
-                <button className="btn btn-secondary" onClick={() => setShowNewProject(true)}>
-                    <FolderOpen size={14} /> New Project
-                </button>
-            </div>
-
-            {/* New Task Modal */}
+            {/* Modals */}
             {showNewTask && (
                 <div className="card" style={{ marginBottom: 'var(--space-xl)', border: '1px solid var(--brand-orange)' }}>
                     <div className="card-header">
@@ -194,7 +259,6 @@ export default function TasksPage() {
                 </div>
             )}
 
-            {/* New Project Modal */}
             {showNewProject && (
                 <div className="card" style={{ marginBottom: 'var(--space-xl)', border: '1px solid var(--brand-purple)' }}>
                     <div className="card-header">
@@ -214,109 +278,108 @@ export default function TasksPage() {
                 </div>
             )}
 
-            {/* Project & Type Filter */}
-            <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)', flexWrap: 'wrap', alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: 'var(--space-xs)', background: 'var(--bg-deep)', padding: 4, borderRadius: 8 }}>
-                    {(['all', 'personal', 'delegated', 'shared'] as const).map(type => (
-                        <button
-                            key={type}
-                            className={`btn ${filterType === type ? 'btn-primary' : ''}`}
-                            style={filterType !== type ? { background: 'transparent', border: 'none', color: 'var(--text-muted)' } : {}}
-                            onClick={() => setFilterType(type)}
-                        >
-                            {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </button>
-                    ))}
-                </div>
+            {/* Split View Top */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) 2fr', gap: 'var(--space-xl)', maxHeight: '400px', flexShrink: 0 }}>
 
-                <div style={{ width: 1, height: 24, background: 'var(--border-color)', margin: '0 8px' }} />
-
-                {projects.length > 0 && (
-                    <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-                        <button
-                            className={`btn ${!selectedProject ? 'btn-primary' : 'btn-secondary'}`}
-                            onClick={() => setSelectedProject(null)}
-                        >
-                            All Projects
-                        </button>
-                        {projects.map(p => (
-                            <button
-                                key={p.id}
-                                className={`btn ${selectedProject === p.id ? 'btn-primary' : 'btn-secondary'}`}
-                                onClick={() => setSelectedProject(selectedProject === p.id ? null : p.id)}
-                                style={selectedProject === p.id ? { background: p.color, borderColor: p.color } : {}}
-                            >
-                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block', marginRight: 6 }} />
-                                {p.name}
-                            </button>
-                        ))}
+                {/* Left: Prioritized List */}
+                <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div className="card-header">
+                        <h2 style={{ fontSize: 16 }}>Agenda</h2>
                     </div>
-                )}
-            </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+                        {listTasks.map(task => {
+                            const isDone = task.status === 'done';
+                            const isShared = task.assignee_id && task.assignee_id !== task.user_id;
 
-            {/* Kanban Board */}
-            <div className="kanban-board">
-                {[
-                    { label: 'To Do', items: todo, color: 'var(--text-muted)', nextStatus: 'progress', nextLabel: 'Start' },
-                    { label: 'In Progress', items: progress, color: 'var(--brand-orange)', nextStatus: 'done', nextLabel: 'Complete' },
-                    { label: 'Complete', items: done, color: 'var(--brand-green)', nextStatus: null, nextLabel: null },
-                ].map((col) => (
-                    <div key={col.label} className="kanban-column">
-                        <div className="kanban-column-header" style={{ color: col.color }}>
-                            {col.label}
-                            <span className="kanban-column-count">{col.items.length}</span>
-                        </div>
-                        {col.items.length === 0 ? (
-                            <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>
-                                No tasks here yet
-                            </div>
-                        ) : (
-                            col.items.map((task) => (
-                                <div key={task.id} className="kanban-card">
+                            return (
+                                <div key={task.id} style={{
+                                    padding: 'var(--space-md)',
+                                    background: 'var(--bg-deep)',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--border-color)',
+                                    opacity: isDone ? 0.6 : 1,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 6
+                                }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <h4 style={{ margin: 0, flex: 1 }}>
-                                            <span className={`priority-dot ${task.priority}`} />
-                                            {task.title}
-                                        </h4>
-                                        <button
-                                            onClick={() => deleteTaskById(task.id)}
-                                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}
-                                            title="Delete task"
-                                        >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={isDone}
+                                                onChange={(e) => updateTaskStatus(task.id, e.target.checked ? 'done' : 'todo')}
+                                                style={{ cursor: 'pointer' }}
+                                            />
+                                            <span style={{
+                                                fontWeight: 600,
+                                                textDecoration: isDone ? 'line-through' : 'none',
+                                                color: isDone ? 'var(--text-muted)' : 'var(--text-main)',
+                                                fontSize: 14
+                                            }}>
+                                                {task.title}
+                                            </span>
+                                        </div>
+                                        <button onClick={() => deleteTaskById(task.id)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                                             <Trash2 size={12} />
                                         </button>
                                     </div>
-                                    {task.project_name && (
-                                        <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: `${task.project_color || '#F5A623'}22`, color: task.project_color || '#F5A623', display: 'inline-block', marginTop: 4, marginRight: 6 }}>
-                                            {task.project_name}
-                                        </span>
-                                    )}
-                                    {task.assignee_id && task.assignee_id !== task.user_id && (
-                                        <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)', display: 'inline-block', marginTop: 4 }}>
-                                            {task.user_id === currentUser ? `To: ${task.assignee_name || 'Unknown'}` : `From: ${task.creator_name || 'Unknown'}`}
-                                        </span>
-                                    )}
-                                    {task.due_date && (
-                                        <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                                            <Clock size={11} />
-                                            {new Date(task.due_date).toLocaleDateString()}
-                                        </div>
-                                    )}
-                                    {col.nextStatus && (
-                                        <button
-                                            className="btn btn-secondary"
-                                            style={{ marginTop: 8, fontSize: 11, padding: '3px 8px' }}
-                                            onClick={() => updateTaskStatus(task.id, col.nextStatus!)}
-                                        >
-                                            {col.nextLabel} <ChevronRight size={11} />
-                                        </button>
-                                    )}
+
+                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <span className={`priority-dot ${task.priority}`} style={{ width: 8, height: 8 }} />
+
+                                        {task.project_name && (
+                                            <span style={{ fontSize: 10, padding: '2px 6px', background: `${task.project_color || '#F5A623'}22`, color: task.project_color || '#F5A623', borderRadius: 4 }}>
+                                                {task.project_name}
+                                            </span>
+                                        )}
+
+                                        {task.due_date && (
+                                            <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <Clock size={10} /> {new Date(task.due_date).toLocaleDateString()}
+                                            </span>
+                                        )}
+
+                                        {isShared && (
+                                            <span style={{
+                                                fontSize: 10,
+                                                padding: '2px 6px',
+                                                background: 'rgba(56, 189, 248, 0.1)',
+                                                color: '#38BDF8',
+                                                borderRadius: 4,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 4
+                                            }}>
+                                                <Users size={10} />
+                                                SHARED by {task.creator_name || 'System'}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
-                            ))
-                        )}
+                            );
+                        })}
+                        {listTasks.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', marginTop: 20 }}>No tasks available</div>}
                     </div>
-                ))}
+                </div>
+
+                {/* Right: Calendar */}
+                <TaskCalendar events={calendarEvents} />
             </div>
-        </>
+
+            {/* Split View Bottom: Node Canvas */}
+            <div style={{ flex: 1, minHeight: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500 }}>
+                    <CheckSquare size={14} /> TASK TOPOLOGY MAP
+                </div>
+                <TaskCanvas
+                    tasks={tasks}
+                    taskEdges={taskEdges}
+                    onNodeDragStop={handleNodeDragStop}
+                    onConnectTasks={handleConnectTasks}
+                    onDeleteEdge={handleDeleteEdge}
+                />
+            </div>
+
+        </div>
     );
 }
