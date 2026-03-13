@@ -9,6 +9,7 @@ import {
     linkTasks, listTaskEdges
 } from "../tasks/store.js";
 import { searchUsers } from "../users/identity.js";
+import { createGoogleCalendarEvent } from "./google.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────
 
@@ -132,11 +133,25 @@ export const taskToolDefinitions: ChatCompletionTool[] = [
             },
         },
     },
+    {
+        type: "function",
+        function: {
+            name: "task_sync_calendar",
+            description: "Manually sync a task to Google Calendar if it wasn't synced automatically.",
+            parameters: {
+                type: "object",
+                properties: {
+                    task_title: { type: "string", description: "Title of the task to sync" },
+                },
+                required: ["task_title"],
+            },
+        },
+    },
 ];
 
 // ── Tool Handlers ────────────────────────────────────────────────
 
-export const taskToolHandlers: Record<string, (input: Record<string, unknown>, userId: string) => string> = {
+export const taskToolHandlers: Record<string, (input: Record<string, unknown>, userId: string) => string | Promise<string>> = {
     task_create: (input, userId) => {
         // Resolve project by name if provided
         let projectId: string | undefined;
@@ -164,18 +179,44 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
             }
         }
 
+        // Normalize date to YYYY-MM-DD if possible
+        let normalizedDate: string | undefined = input.due_date ? String(input.due_date) : undefined;
+        if (normalizedDate && !normalizedDate.includes('T')) {
+            // If just a date like "2026-03-10", ensure it's valid ISO
+            const d = new Date(normalizedDate);
+            if (!isNaN(d.getTime())) {
+                normalizedDate = d.toISOString().split('T')[0];
+            }
+        }
+
         const task = createTask(userId, String(input.title), {
             projectId,
             assigneeId,
             description: input.description ? String(input.description) : undefined,
             priority: (input.priority as "high" | "medium" | "low") || "medium",
-            dueDate: input.due_date ? String(input.due_date) : undefined,
+            dueDate: normalizedDate,
         });
+
+        let syncMsg = "";
+        if (normalizedDate) {
+            // Attempt auto-sync to Google Calendar
+            createGoogleCalendarEvent(userId, {
+                summary: task.title,
+                description: task.description || "",
+                startTime: `${normalizedDate}T09:00:00Z`,
+                endTime: `${normalizedDate}T10:00:00Z`
+            }).then(res => {
+                console.log(`Auto-sync result for task ${task.id}: ${res}`);
+            }).catch(e => {
+                console.warn(`Auto-sync failed for task ${task.id}:`, e);
+            });
+            syncMsg = " (Auto-synced to Google Calendar)";
+        }
 
         return JSON.stringify({
             success: true,
             task: { id: task.id, title: task.title, priority: task.priority, status: task.status, due_date: task.due_date, assignee_id: task.assignee_id },
-            message: `Task "${task.title}" created successfully.${assignMsg}`,
+            message: `Task "${task.title}" created successfully.${assignMsg}${syncMsg}`,
         });
     },
 
@@ -237,13 +278,35 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
         const updates: Record<string, unknown> = {};
         if (input.status) updates.status = input.status;
         if (input.priority) updates.priority = input.priority;
-        if (input.due_date) updates.due_date = input.due_date;
+
+        let normalizedDate: string | undefined = input.due_date ? String(input.due_date) : undefined;
+        if (normalizedDate) {
+            if (!normalizedDate.includes('T')) {
+                const d = new Date(normalizedDate);
+                if (!isNaN(d.getTime())) {
+                    normalizedDate = d.toISOString().split('T')[0];
+                }
+            }
+            updates.due_date = normalizedDate;
+        }
 
         const updated = updateTask(match.id, userId, updates as any);
+
+        let syncMsg = "";
+        if (normalizedDate && updated) {
+            createGoogleCalendarEvent(userId, {
+                summary: updated.title,
+                description: updated.description || "",
+                startTime: `${normalizedDate}T09:00:00Z`,
+                endTime: `${normalizedDate}T10:00:00Z`
+            }).catch(() => { });
+            syncMsg = " (Calendar synced)";
+        }
+
         return JSON.stringify({
             success: true,
             task: updated ? { title: updated.title, status: updated.status, priority: updated.priority } : null,
-            message: `Task "${match.title}" updated.`,
+            message: `Task "${match.title}" updated.${syncMsg}`,
         });
     },
 
@@ -277,6 +340,24 @@ export const taskToolHandlers: Record<string, (input: Record<string, unknown>, u
             return JSON.stringify({ success: true, message: `Successfully linked "${sourceMatch.title}" -> "${targetMatch.title}".` });
         }
         return JSON.stringify({ success: false, message: "Failed to link tasks. You may lack permission, or the link already exists." });
+    },
+
+    task_sync_calendar: async (input, userId) => {
+        const tasks = listTasks(userId);
+        const searchTitle = String(input.task_title).toLowerCase();
+        const match = tasks.find(t => t.title.toLowerCase().includes(searchTitle));
+
+        if (!match) return JSON.stringify({ success: false, message: `No task found matching "${input.task_title}".` });
+        if (!match.due_date) return JSON.stringify({ success: false, message: "Task has no due date to sync." });
+
+        const res = await createGoogleCalendarEvent(userId, {
+            summary: match.title,
+            description: match.description || "",
+            startTime: `${match.due_date.split('T')[0]}T09:00:00Z`,
+            endTime: `${match.due_date.split('T')[0]}T10:00:00Z`
+        });
+
+        return JSON.stringify({ success: !res.startsWith("Error"), message: res });
     },
 
     project_create: (input, userId) => {

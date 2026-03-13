@@ -96,6 +96,24 @@ export const definitions: ChatCompletionTool[] = [
     {
         type: "function",
         function: {
+            name: "google_gmail_delete",
+            description: "Move a specific email to the trash (trash/delete) by its message ID.",
+            parameters: {
+                type: "object",
+                properties: {
+                    messageId: {
+                        type: "string",
+                        description: "The ID of the Gmail message to delete.",
+                    },
+                },
+                required: ["messageId"],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
             name: "google_drive_search",
             description: "Search for files in the user's Google Drive.",
             parameters: {
@@ -159,19 +177,18 @@ export async function executeCalendarListEvents(input: { maxResults?: number }, 
     }
 }
 
-export async function executeCalendarCreateEvent(input: { summary: string, description?: string, startTime: string, endTime: string }, userId?: string): Promise<string> {
-    if (!userId) return "Error: userId is required.";
+export async function createGoogleCalendarEvent(userId: string, event: { summary: string, description?: string, startTime: string, endTime: string }): Promise<string> {
     const connection = getConnection(userId, "google");
     if (!connection || connection.status !== "connected" || !connection.access_token) return "Error: Google not connected.";
 
     // Check if the user has the required full calendar scope for writes
     if (!connection.scopes.includes("calendar")) return "Error: The user has not granted the full 'calendar' scope to create events.";
 
-    const event = {
-        summary: input.summary,
-        description: input.description || "",
-        start: { dateTime: input.startTime },
-        end: { dateTime: input.endTime }
+    const googleEvent = {
+        summary: event.summary,
+        description: event.description || "",
+        start: { dateTime: event.startTime },
+        end: { dateTime: event.endTime }
     };
 
     try {
@@ -181,7 +198,7 @@ export async function executeCalendarCreateEvent(input: { summary: string, descr
                 "Authorization": `Bearer ${connection.access_token}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify(event)
+            body: JSON.stringify(googleEvent)
         });
 
         if (!response.ok) return `Calendar API Error: ${response.status} - ${await response.text()}`;
@@ -191,6 +208,11 @@ export async function executeCalendarCreateEvent(input: { summary: string, descr
     } catch (err) {
         return `Failed to create Calendar event: ${err}`;
     }
+}
+
+export async function executeCalendarCreateEvent(input: { summary: string, description?: string, startTime: string, endTime: string }, userId?: string): Promise<string> {
+    if (!userId) return "Error: userId is required.";
+    return createGoogleCalendarEvent(userId, input);
 }
 
 export async function executeGmailSearch(input: { query?: string, maxResults?: any }, userId?: string): Promise<string> {
@@ -282,6 +304,24 @@ export async function executeGmailRead(input: { messageId: string }, userId?: st
         return JSON.stringify({ id: data.id, date, subject, from, to, body }, null, 2);
     } catch (err) {
         return `Failed to read Gmail message: ${err}`;
+    }
+}
+
+export async function executeGmailDelete(input: { messageId: string }, userId?: string): Promise<string> {
+    if (!userId) return "Error: userId is required.";
+    const connection = getConnection(userId, "google");
+    if (!connection || connection.status !== "connected" || !connection.access_token) return "Error: Google not connected.";
+
+    try {
+        const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${input.messageId}/trash`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${connection.access_token}` }
+        });
+        if (!response.ok) return `Gmail API Error: ${response.status} - ${await response.text()}`;
+
+        return JSON.stringify({ success: true, message: `Message ${input.messageId} moved to trash.` });
+    } catch (err) {
+        return `Failed to trash Gmail message: ${err}`;
     }
 }
 

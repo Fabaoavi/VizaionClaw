@@ -60,6 +60,7 @@ const handlers: Record<string, ToolHandler> = {
     google_calendar_create_event: (input, userId) => googleTools.executeCalendarCreateEvent(input as any, userId),
     google_gmail_search: (input, userId) => googleTools.executeGmailSearch(input as any, userId),
     google_gmail_read: (input, userId) => googleTools.executeGmailRead(input as any, userId),
+    google_gmail_delete: (input, userId) => googleTools.executeGmailDelete(input as any, userId),
     google_drive_search: (input, userId) => googleTools.executeDriveSearch(input as any, userId),
     meta_get_page_profile: () => metaTools.executeGetPageProfile(),
     ionos_get_datacenters: () => ionosTools.executeGetDatacenters(),

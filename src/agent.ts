@@ -28,6 +28,14 @@ Available tools:
 - file_read/write/list/delete/search — file operations
 - web_search — search the web
 - switch_model — change to a stronger/faster/cheaper LLM mid-conversation
+- task_create/list/update/delete/link — manage tasks and your visual node topology
+- project_create/list — logically group tasks into projects
+- google_calendar_list/create — access and manage your Google Calendar events
+- google_gmail_search/read — check and summarize your Gmail messages
+- google_drive_search — search your Google Drive documents
+- meta_get_page_profile — check your connected Meta page status
+- ionos_get_datacenters — view your cloud infrastructure on IONOS
+- reminder_set/list — schedule proactive notifications
 
 Always use memory_store to remember important things the user tells you.
 Always search your memory before answering questions about the user.
@@ -35,7 +43,8 @@ Always search your memory before answering questions about the user.
 CRITICAL INSTRUCTIONS FOR TOOLS:
 - When executing tools that require IDs (like reading an email or file), you MUST first use a search tool to get the IDs. 
 - NEVER attempt to search and read in the exact same step, as you will hallucinate the ID.
-- Do NOT output raw JSON blocks. Use the native tool call API.`;
+- Do NOT output raw JSON blocks. Use the native tool call API.
+- For task_list, you will receive a field 'related_to' which tells you the topology of the user's projects. Use task_link to connect related tasks.`;
 
 const sessions = new Map<number, string>();
 
@@ -81,7 +90,8 @@ export async function runAgentLoop(
 
     // Get all tools including MCP
     const tools = getToolDefinitions();
-    const maxIterations = config.maxAgentIterations;
+    // Default config values might be too restrictive (e.g., 5). Bumping ceiling to prevent rapid limit hits.
+    const maxIterations = config.maxAgentIterations || 15;
 
     let finalModelUsed = "unknown";
     let totalTokens = 0;
