@@ -1,5 +1,5 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions.js";
-import { getConnection } from "../connections/store.js";
+import { getConnection, upsertConnection } from "../connections/store.js";
 
 function decodeBase64Url(base64Url: string) {
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -134,6 +134,55 @@ export const definitions: ChatCompletionTool[] = [
     }
 ];
 
+export async function fetchWithGoogleAuth(userId: string, url: string, options: RequestInit = {}): Promise<Response> {
+    const connection = getConnection(userId, "google");
+    if (!connection || connection.status !== "connected" || !connection.access_token) {
+        throw new Error("User has not connected their Google account or the token is revoked/expired.");
+    }
+
+    let token = connection.access_token;
+    const headers = new Headers(options.headers || {});
+    headers.set("Authorization", `Bearer ${token}`);
+
+    let response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401 && connection.refresh_token) {
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+        if (clientId && clientSecret) {
+            try {
+                const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({
+                        client_id: clientId,
+                        client_secret: clientSecret,
+                        refresh_token: connection.refresh_token,
+                        grant_type: "refresh_token"
+                    })
+                });
+
+                if (tokenRes.ok) {
+                    const data = await tokenRes.json();
+                    upsertConnection(userId, "google", data.access_token, connection.refresh_token, connection.scopes, data.expires_in * 1000);
+                    token = data.access_token;
+                    headers.set("Authorization", `Bearer ${token}`);
+                    response = await fetch(url, { ...options, headers });
+                } else {
+                    console.error("Google token refresh failed:", tokenRes.status, await tokenRes.text());
+                }
+            } catch (err) {
+                console.error("Failed to execute Google token refresh:", err);
+            }
+        } else {
+            console.error("Cannot refresh token: missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in environment.");
+        }
+    }
+
+    return response;
+}
+
 export async function executeCalendarListEvents(input: { maxResults?: number }, userId?: string): Promise<string> {
     if (!userId) return "Error: userId is required to fetch Google Calendar events.";
     const connection = getConnection(userId, "google");
@@ -146,16 +195,15 @@ export async function executeCalendarListEvents(input: { maxResults?: number }, 
     const timeMin = new Date().toISOString();
 
     try {
-        const response = await fetch(
+        const response = await fetchWithGoogleAuth(userId,
             `https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=${maxResults}&timeMin=${encodeURIComponent(timeMin)}&singleEvents=true&orderBy=startTime`,
             {
                 method: "GET",
-                headers: { "Authorization": `Bearer ${connection.access_token}`, "Accept": "application/json" }
+                headers: { "Accept": "application/json" }
             }
         );
 
         if (!response.ok) {
-            if (response.status === 401) return "Error: Google access token might be expired. Refresh token logic needs to be triggered (Not implemented in MVP).";
             return `Google API Error: ${response.status} - ${await response.text()}`;
         }
 
@@ -192,10 +240,9 @@ export async function createGoogleCalendarEvent(userId: string, event: { summary
     };
 
     try {
-        const response = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+        const response = await fetchWithGoogleAuth(userId, "https://www.googleapis.com/calendar/v3/calendars/primary/events", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${connection.access_token}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify(googleEvent)
@@ -225,9 +272,7 @@ export async function executeGmailSearch(input: { query?: string, maxResults?: a
     const maxResults = typeof input.maxResults === 'string' ? parseInt(input.maxResults, 10) : (input.maxResults || 5);
 
     try {
-        const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`, {
-            headers: { "Authorization": `Bearer ${connection.access_token}` }
-        });
+        const response = await fetchWithGoogleAuth(userId, `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`);
         if (!response.ok) return `Gmail API Error: ${response.status} - ${await response.text()}`;
         const data = await response.json();
 
@@ -235,9 +280,7 @@ export async function executeGmailSearch(input: { query?: string, maxResults?: a
 
         // Fetch headers for these messages
         const details = await Promise.all(data.messages.map(async (m: { id: string }) => {
-            const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
-                headers: { "Authorization": `Bearer ${connection.access_token}` }
-            });
+            const msgRes = await fetchWithGoogleAuth(userId, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`);
             if (msgRes.ok) {
                 const msgData = await msgRes.json();
                 const headers = msgData.payload?.headers || [];
@@ -261,9 +304,7 @@ export async function executeGmailRead(input: { messageId: string }, userId?: st
     if (!connection || connection.status !== "connected" || !connection.access_token) return "Error: Google not connected.";
 
     try {
-        const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${input.messageId}?format=full`, {
-            headers: { "Authorization": `Bearer ${connection.access_token}` }
-        });
+        const response = await fetchWithGoogleAuth(userId, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${input.messageId}?format=full`);
         if (!response.ok) return `Gmail API Error: ${response.status} - ${await response.text()}`;
         const data = await response.json();
 
@@ -313,9 +354,8 @@ export async function executeGmailDelete(input: { messageId: string }, userId?: 
     if (!connection || connection.status !== "connected" || !connection.access_token) return "Error: Google not connected.";
 
     try {
-        const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${input.messageId}/trash`, {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${connection.access_token}` }
+        const response = await fetchWithGoogleAuth(userId, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${input.messageId}/trash`, {
+            method: "POST"
         });
         if (!response.ok) return `Gmail API Error: ${response.status} - ${await response.text()}`;
 
@@ -338,9 +378,7 @@ export async function executeDriveSearch(input: { query?: string, maxResults?: n
     }
 
     try {
-        const response = await fetch(url, {
-            headers: { "Authorization": `Bearer ${connection.access_token}` }
-        });
+        const response = await fetchWithGoogleAuth(userId, url);
         if (!response.ok) return `Drive API Error: ${response.status} - ${await response.text()}`;
         const data = await response.json();
         const files = data.files || [];
